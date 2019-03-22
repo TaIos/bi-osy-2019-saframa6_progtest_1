@@ -1,0 +1,3 @@
+/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles/source.dir
