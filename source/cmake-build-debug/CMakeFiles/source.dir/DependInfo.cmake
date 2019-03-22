@@ -4,7 +4,7 @@ set(CMAKE_DEPENDS_LANGUAGES
   )
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_CXX
-  "/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/main.cpp" "/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles/source.dir/main.cpp.o"
+  "/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/solution.cpp" "/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles/source.dir/solution.cpp.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")
 

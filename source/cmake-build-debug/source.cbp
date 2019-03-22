@@ -82,7 +82,7 @@
 				</MakeCommands>
 			</Target>
 		</Build>
-		<Unit filename="/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/main.cpp">
+		<Unit filename="/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/solution.cpp">
 			<Option target="source"/>
 		</Unit>
 		<Unit filename="/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/CMakeLists.txt">

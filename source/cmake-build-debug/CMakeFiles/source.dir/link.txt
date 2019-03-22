@@ -1,1 +1,1 @@
-/usr/bin/c++  -g   CMakeFiles/source.dir/main.cpp.o  -o source 
+/usr/bin/c++  -g   CMakeFiles/source.dir/solution.cpp.o  -o source 

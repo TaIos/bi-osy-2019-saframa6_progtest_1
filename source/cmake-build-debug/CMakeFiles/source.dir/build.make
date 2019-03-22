@@ -57,27 +57,27 @@ include CMakeFiles/source.dir/progress.make
 # Include the compile flags for this target's objects.
 include CMakeFiles/source.dir/flags.make
 
-CMakeFiles/source.dir/main.cpp.o: CMakeFiles/source.dir/flags.make
-CMakeFiles/source.dir/main.cpp.o: ../main.cpp
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/source.dir/main.cpp.o"
-	/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/source.dir/main.cpp.o -c /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/main.cpp
+CMakeFiles/source.dir/solution.cpp.o: CMakeFiles/source.dir/flags.make
+CMakeFiles/source.dir/solution.cpp.o: ../solution.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/source.dir/solution.cpp.o"
+	/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/source.dir/solution.cpp.o -c /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/solution.cpp
 
-CMakeFiles/source.dir/main.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/source.dir/main.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/main.cpp > CMakeFiles/source.dir/main.cpp.i
+CMakeFiles/source.dir/solution.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/source.dir/solution.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/solution.cpp > CMakeFiles/source.dir/solution.cpp.i
 
-CMakeFiles/source.dir/main.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/source.dir/main.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/main.cpp -o CMakeFiles/source.dir/main.cpp.s
+CMakeFiles/source.dir/solution.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/source.dir/solution.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/solution.cpp -o CMakeFiles/source.dir/solution.cpp.s
 
 # Object files for target source
 source_OBJECTS = \
-"CMakeFiles/source.dir/main.cpp.o"
+"CMakeFiles/source.dir/solution.cpp.o"
 
 # External object files for target source
 source_EXTERNAL_OBJECTS =
 
-source: CMakeFiles/source.dir/main.cpp.o
+source: CMakeFiles/source.dir/solution.cpp.o
 source: CMakeFiles/source.dir/build.make
 source: CMakeFiles/source.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/slarty/semestr4/osy/bi-osy-2019-saframa6_progtest_1/source/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable source"
