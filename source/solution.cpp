@@ -37,29 +37,46 @@ struct Task {
     int id_material;
     ACustomer customer;
     AOrderList orderList;
+
+    Task(int id_material, const ACustomer &customer, const AOrderList &orderList) : id_material(id_material),
+                                                                                    customer(customer),
+                                                                                    orderList(orderList) {}
 };
 
 struct BestPricelist {
     int id_material;
     int pricingsLeft;
     CPriceList priceList;
+
+    BestPricelist(int id_material, int pricingsLeft, const CPriceList &priceList) : id_material(id_material),
+                                                                                    pricingsLeft(pricingsLeft),
+                                                                                    priceList(priceList) {}
+};
+
+struct PriceList {
+    AProducer prod;
+    APriceList priceList;
+
+    PriceList(const AProducer &prod, const APriceList &priceList) : prod(prod), priceList(priceList) {}
 };
 
 class CWeldingCompany {
 private:
     map<int, vector<Task>> taskPool;
-    vector<APriceList> priceListPool;
+    deque<PriceList> priceListPool;
     map<int, BestPricelist> bestPriceList;
 
     vector<AProducer> producers;
     vector<ACustomer> customers;
 
+    vector<thread> threadsCustomer;
+    vector<thread> threadsWorker;
 
-    pthread_attr_t attr;
-    pthread_mutex_t task_pool_manip;
+    mutex taskPoolManip;
+    mutex priceListPoolManip;
 
-    void *waitingForDemandRoutine(void *customer) {
-        ACustomer c = *((ACustomer *) customer);
+public:
+    void customerRoutine(ACustomer c) {
         AOrderList orderList;
 
         while (true) {
@@ -67,12 +84,9 @@ private:
             if (orderList == nullptr || orderList.get() == nullptr)
                 break;
 
-            Task task;
-            task.customer = c;
-            task.id_material = orderList.get()->m_MaterialID;
-            task.orderList = orderList;
+            Task task(orderList.get()->m_MaterialID, c, orderList);
 
-            pthread_mutex_lock(&task_pool_manip);
+            taskPoolManip.lock();
             auto it = taskPool.find(task.id_material);
             if (it == taskPool.end()) {
                 vector<Task> vec;
@@ -81,38 +95,31 @@ private:
             } else {
                 it->second.emplace_back(task);
             }
-            pthread_mutex_unlock(&task_pool_manip);
+            taskPoolManip.unlock();
         }
-
-
-        return nullptr;
     }
 
-public:
-    CWeldingCompany();
+    void workerRoutine() {
 
-    virtual ~CWeldingCompany();
+    }
 
-    static void SeqSolve(APriceList priceList,
-                         COrder &order);
+    static void SeqSolve(APriceList priceList, COrder &order);
 
     void AddProducer(AProducer prod);
 
     void AddCustomer(ACustomer cust);
 
-    void AddPriceList(AProducer prod,
-                      APriceList priceList);
+    void AddPriceList(AProducer prod, APriceList priceList);
 
-    void Start(unsigned thrCount) {
-    }
+    void Start(unsigned thrCount);
 
-    void Stop(void);
+    void Stop();
 };
 
-void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
-    vector<COrder> wrapper;
-    wrapper.emplace_back(order);
-    ProgtestSolver(wrapper, std::move(priceList));
+void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
+    priceListPoolManip.lock();
+    priceListPool.emplace_back(PriceList(prod, priceList));
+    priceListPoolManip.unlock();
 }
 
 void CWeldingCompany::AddProducer(AProducer prod) {
@@ -123,30 +130,30 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
     customers.emplace_back(cust);
 }
 
-CWeldingCompany::CWeldingCompany() {
-    // create & init attributes
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-    // init mutexes
-    pthread_mutex_init(&task_pool_manip, nullptr);
+void CWeldingCompany::Start(unsigned thrCount) {
+    for (auto &c : customers)
+        threadsCustomer.emplace_back([=] { customerRoutine(c); });
+    for (unsigned i = 0; i < thrCount; i++)
+        threadsWorker.emplace_back([=] { workerRoutine(); });
 }
 
-CWeldingCompany::~CWeldingCompany() {
-    // destroy mutexes
-    pthread_mutex_destroy(&task_pool_manip);
-
-    // destroy attributes
-    pthread_attr_destroy(&attr);
-
+void CWeldingCompany::Stop() {
+    for (auto &t : threadsCustomer)
+        t.join();
+    for (auto &t: threadsWorker)
+        t.join();
 }
 
-// TODO: CWeldingCompany implementation goes here
+void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
+    vector<COrder> wrapper;
+    wrapper.emplace_back(order);
+    ProgtestSolver(wrapper, std::move(priceList));
+}
 
 //-------------------------------------------------------------------------------------------------
 #ifndef __PROGTEST__
 
-int main(void) {
+int main() {
     using namespace std::placeholders;
     CWeldingCompany test;
 
