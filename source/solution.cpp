@@ -155,6 +155,7 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
         if (orderList == nullptr || orderList.get() == nullptr)
             break;
 
+        printf("Received order on %d from customer\n", (int) orderList.get()->m_MaterialID);
         Task task(orderList.get()->m_MaterialID, customer, orderList);
 
         unique_lock<mutex> ul(mtx_taskPoolManip);
@@ -167,22 +168,27 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
             it->second.emplace_back(task);
         }
         ul.unlock();
+        printf("Added received order to PriceListPool\n");
 
         for (const auto &e : producers)
             e.get()->SendPriceList(task.id_material);
+        printf("Notified all producers to send their pricelists\n");
     }
     unique_lock<mutex> lock_CustomerActiveCnt(mtx_customerActiveCntManip);
     activeCustomerCnt--;
     if (activeCustomerCnt == 0) { // last active customerThread
+        printf("I'am the last active customer thread\n");
         unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
         cv_priceListPoolEmpty.wait(lock_TaskPool, [this]() { return priceListPool.empty(); });
+
         // last PriceList from Producers, add ending tokens
         unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
-        for (int i = 0; i < (int)threadsWorker.size(); i++) {
+        for (int i = 0; i < (int) threadsWorker.size(); i++) {
             priceListPool.emplace_back(PriceListWrapper(true));
         }
         lock_PriceListPool.unlock();
         lock_TaskPool.unlock();
+        printf("Last customer thread added N end tokens, now notify all sleeping workers\n");
         cv_priceListPoolEmpty.notify_all(); // wake up all sleeping workerThreads
     }
     lock_CustomerActiveCnt.unlock();
@@ -198,9 +204,13 @@ void CWeldingCompany::workerRoutine() {
         priceListPool.pop_front();
         lock_PriceListPool.unlock();
 
+        printf("Worker, working on %d\n", (int) currPriceList.priceList.get()->m_MaterialID);
+
         // end token found
-        if (currPriceList.end)
+        if (currPriceList.end) {
+            printf("Worker, END token reached\n");
             break;
+        }
 
         // make CurrPriceList consistent (m_W <= m_H is always true)
         unsigned int tmp;
@@ -228,6 +238,7 @@ void CWeldingCompany::workerRoutine() {
 
         // all pricings collected
         if ((--(it->second.pricingsLeft)) == 0) {
+            printf("All pricings for %d collected\n", (int) it->second.id_material);
             unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
             auto taskGroup = taskPool.find(it->first);
             for (auto &task : taskGroup->second) {
@@ -238,6 +249,7 @@ void CWeldingCompany::workerRoutine() {
             if (taskPool.empty()) // signal that the TaskPool is empty
                 cv_priceListPoolEmpty.notify_one();
             lock_TaskPool.unlock();
+            printf("Pricings passed to customer\n");
         }
         lock_BestPriceListRecord.unlock();
     }
@@ -248,14 +260,17 @@ void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
     priceListPool.emplace_back(PriceListWrapper(prod, priceList));
     cv_priceListPoolEmpty.notify_one();
     ul.unlock();
+    printf("Pricelist on material %d recieved\n", (int) priceList.get()->m_MaterialID);
 }
 
 void CWeldingCompany::AddProducer(AProducer prod) {
     producers.emplace_back(prod);
+    printf("Added producer\n");
 }
 
 void CWeldingCompany::AddCustomer(ACustomer cust) {
     customers.emplace_back(cust);
+    printf("Added customer\n");
 }
 
 void CWeldingCompany::Start(unsigned thrCount) {
@@ -264,13 +279,18 @@ void CWeldingCompany::Start(unsigned thrCount) {
         threadsCustomer.emplace_back([=] { customerRoutine(c); });
     for (unsigned i = 0; i < thrCount; i++)
         threadsWorker.emplace_back([=] { workerRoutine(); });
+    printf("Created %d customer threads and %d worker threads\n", (int) customers.size(), (int) thrCount);
 }
 
 void CWeldingCompany::Stop() {
+    printf("Stopping threads ...\n");
     for (auto &t : threadsCustomer)
         t.join();
+    printf("Customer threads stopped\n");
     for (auto &t: threadsWorker)
         t.join();
+    printf("Worker threads stopped\n");
+    printf("Returning from Stop\n");
 }
 
 void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
