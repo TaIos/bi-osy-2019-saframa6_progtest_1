@@ -43,28 +43,58 @@ struct Task {
                                                                                     orderList(orderList) {}
 };
 
-struct BestPricelist {
+struct BestPriceList {
     int id_material;
     int pricingsLeft;
+    map<unsigned, map<unsigned, double>> best;
+    mutex lock;
     CPriceList priceList;
 
-    BestPricelist(int id_material, int pricingsLeft, const CPriceList &priceList) : id_material(id_material),
-                                                                                    pricingsLeft(pricingsLeft),
-                                                                                    priceList(priceList) {}
+    BestPriceList(unsigned id_material, int pricingsLeft) : id_material(id_material), pricingsLeft(pricingsLeft),
+                                                            priceList(CPriceList(id_material)) {}
+
+    BestPriceList() : priceList(CPriceList(0)) {}
+
+    void updateBestPriceList(const vector<CProd> &list) {
+        // TODO
+    }
+
+
+    CPriceList &createGetPriceList() {
+        priceList.m_List.clear();
+        for (auto i: best) {
+            for (auto j: i.second) {
+                priceList.Add(CProd(i.first, j.first, j.second));
+            }
+        }
+        return priceList;
+    }
+
+    BestPriceList &operator=(const BestPriceList &other) {
+        if (this != &other) {
+            id_material = other.id_material;
+            pricingsLeft = other.pricingsLeft;
+            best = other.best;
+            priceList = other.priceList;
+        }
+        return *this;
+    }
 };
 
-struct PriceList {
+struct PriceListWrapper {
     AProducer prod;
     APriceList priceList;
 
-    PriceList(const AProducer &prod, const APriceList &priceList) : prod(prod), priceList(priceList) {}
+    PriceListWrapper(const AProducer &prod, const APriceList &priceList) : prod(prod), priceList(priceList) {}
+
+    PriceListWrapper() {}
 };
 
 class CWeldingCompany {
 private:
     map<int, vector<Task>> taskPool;
-    deque<PriceList> priceListPool;
-    map<int, BestPricelist> bestPriceList;
+    deque<PriceListWrapper> priceListPool;
+    map<int, BestPriceList> bestPriceList;
 
     vector<AProducer> producers;
     vector<ACustomer> customers;
@@ -72,38 +102,16 @@ private:
     vector<thread> threadsCustomer;
     vector<thread> threadsWorker;
 
-    mutex taskPoolManip;
-    mutex priceListPoolManip;
+    mutex mtx_taskPoolManip;
+    mutex mtx_priceListPoolManip;
+    mutex mtx_bestPriceListPoolManip;
+
+    condition_variable cv_priceListPoolEmpty; // protecs from removing from empty pool
 
 public:
-    void customerRoutine(ACustomer c) {
-        AOrderList orderList;
+    void customerRoutine(ACustomer c);
 
-        while (true) {
-            orderList = c.get()->WaitForDemand();
-            if (orderList == nullptr || orderList.get() == nullptr)
-                break;
-
-            Task task(orderList.get()->m_MaterialID, c, orderList);
-
-            taskPoolManip.lock();
-            auto it = taskPool.find(task.id_material);
-            if (it == taskPool.end()) {
-                vector<Task> vec;
-                vec.emplace_back(task);
-                taskPool[task.id_material] = vec;
-            } else {
-                it->second.emplace_back(task);
-            }
-            taskPoolManip.unlock();
-        }
-    }
-
-    void workerRoutine() {
-
-    }
-
-    static void SeqSolve(APriceList priceList, COrder &order);
+    void workerRoutine();
 
     void AddProducer(AProducer prod);
 
@@ -114,12 +122,78 @@ public:
     void Start(unsigned thrCount);
 
     void Stop();
+
+    static void SeqSolve(APriceList priceList, COrder &order);
 };
 
+void CWeldingCompany::customerRoutine(ACustomer c) {
+    AOrderList orderList;
+
+    while (true) {
+        orderList = c.get()->WaitForDemand();
+        if (orderList == nullptr || orderList.get() == nullptr)
+            break;
+
+        Task task(orderList.get()->m_MaterialID, c, orderList);
+
+        mtx_taskPoolManip.lock();
+        auto it = taskPool.find(task.id_material);
+        if (it == taskPool.end()) {
+            vector<Task> vec;
+            vec.emplace_back(task);
+            taskPool[task.id_material] = vec;
+        } else {
+            it->second.emplace_back(task);
+        }
+        mtx_taskPoolManip.unlock();
+    }
+}
+
+void CWeldingCompany::workerRoutine() {
+    PriceListWrapper currPriceList;
+
+    // pop PriceList from pool if any
+    unique_lock<mutex> ul(mtx_priceListPoolManip);
+    cv_priceListPoolEmpty.wait(ul, [this]() { return !priceListPool.empty(); });
+    currPriceList = priceListPool.front();
+    priceListPool.pop_front();
+    ul.unlock();
+
+    // make CurrPriceList consistent
+    unsigned int tmp;
+    for (auto &e : currPriceList.priceList.get()->m_List) {
+        if (e.m_W > e.m_H) {
+            tmp = e.m_W;
+            e.m_W = e.m_H;
+            e.m_H = tmp;
+        }
+    }
+
+    // Find BestPriceList for updating, construct it if record doesn't exist
+    map<int, BestPriceList>::iterator it;
+    int id = currPriceList.priceList.get()->m_MaterialID;
+    unique_lock<mutex> ul1(mtx_bestPriceListPoolManip);
+    it = bestPriceList.find(id);
+    if (it == bestPriceList.end()) {
+        bestPriceList[id] = BestPriceList(id, (int) producers.size());
+    }
+    ul1.unlock();
+
+    // Update BestPriceList with current PriceList
+    unique_lock<mutex> ul2(it->second.lock);
+    it->second.updateBestPriceList(currPriceList.priceList.get()->m_List);
+    // we got all pricings
+    if ((--(it->second.pricingsLeft)) == 0) {
+        return;
+    }
+    ul2.unlock();
+}
+
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
-    priceListPoolManip.lock();
-    priceListPool.emplace_back(PriceList(prod, priceList));
-    priceListPoolManip.unlock();
+    unique_lock<mutex> ul(mtx_priceListPoolManip);
+    priceListPool.emplace_back(PriceListWrapper(prod, priceList));
+    cv_priceListPoolEmpty.notify_one();
+    ul.unlock();
 }
 
 void CWeldingCompany::AddProducer(AProducer prod) {
