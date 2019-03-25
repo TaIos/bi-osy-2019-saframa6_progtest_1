@@ -129,6 +129,15 @@ private:
     condition_variable cv_priceListPoolEmpty; // protects from removing from empty pool
     condition_variable cv_taskPoolEmpty; // signals when TaskPool is empty
 
+    //================================================================================
+    PriceListWrapper popFromPricelist();
+
+    void preprocessPricelist(PriceListWrapper &priceListWrapper);
+
+    map<int, BestPriceList>::iterator findCreateBestPriceList(PriceListWrapper &priceListWrapper);
+
+    void updateBestPriceList(const vector<CProd> &pricelist, BestPriceList &best);
+
 public:
     void customerRoutine(ACustomer customer);
 
@@ -178,7 +187,7 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
         cv_priceListPoolEmpty.wait(lock_TaskPool, [this]() { return priceListPool.empty(); });
         // last PriceList from Producers, add ending tokens
         unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
-        for (int i = 0; i < (int)threadsWorker.size(); i++) {
+        for (int i = 0; i < (int) threadsWorker.size(); i++) {
             priceListPool.emplace_back(PriceListWrapper(true));
         }
         lock_PriceListPool.unlock();
@@ -191,55 +200,15 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
     while (true) {
-        // pop PriceList from pool if any
-        unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
-        cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
-        currPriceList = priceListPool.front();
-        priceListPool.pop_front();
-        lock_PriceListPool.unlock();
 
-        // end token found
+        currPriceList = popFromPricelist();
+
         if (currPriceList.end)
             break;
 
-        // make CurrPriceList consistent (m_W <= m_H is always true)
-        unsigned int tmp;
-        for (auto &e : currPriceList.priceList.get()->m_List) {
-            if (e.m_W > e.m_H) {
-                tmp = e.m_W;
-                e.m_W = e.m_H;
-                e.m_H = tmp;
-            }
-        }
-
-        // Find BestPriceList for updating, construct it if record doesn't exist
-        map<int, BestPriceList>::iterator it;
-        int id = currPriceList.priceList.get()->m_MaterialID;
-        unique_lock<mutex> lock_BestPriceListPool(mtx_bestPriceListPoolManip);
-        it = bestPriceList.find(id);
-        if (it == bestPriceList.end()) {
-            bestPriceList[id] = BestPriceList(id, (int) producers.size());
-        }
-        lock_BestPriceListPool.unlock();
-
-        // Update BestPriceList with current PriceList
-        unique_lock<mutex> lock_BestPriceListRecord(it->second.lock);
-        it->second.updateBestPriceList(currPriceList.priceList.get()->m_List);
-
-        // all pricings collected
-        if ((--(it->second.pricingsLeft)) == 0) {
-            unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
-            auto taskGroup = taskPool.find(it->first);
-            for (auto &task : taskGroup->second) {
-                ProgtestSolver(task.orderList.get()->m_List, it->second.createGetPriceList());
-                task.customer.get()->Completed(task.orderList);
-            }
-            taskPool.erase(taskGroup);
-            if (taskPool.empty()) // signal that the TaskPool is empty
-                cv_priceListPoolEmpty.notify_one();
-            lock_TaskPool.unlock();
-        }
-        lock_BestPriceListRecord.unlock();
+        preprocessPricelist(currPriceList);
+        auto it_best = findCreateBestPriceList(currPriceList);
+        updateBestPriceList(currPriceList.priceList.get()->m_List, it_best->second);
     }
 }
 
@@ -277,6 +246,64 @@ void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
     vector<COrder> wrapper;
     wrapper.emplace_back(order);
     ProgtestSolver(wrapper, std::move(priceList));
+}
+
+PriceListWrapper CWeldingCompany::popFromPricelist() {
+    PriceListWrapper currPriceList;
+    unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
+    cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
+    currPriceList = priceListPool.front();
+    priceListPool.pop_front();
+    lock_PriceListPool.unlock();
+    return currPriceList;
+}
+
+void CWeldingCompany::preprocessPricelist(PriceListWrapper &priceListWrapper) {
+// make CurrPriceList consistent (m_W <= m_H is always true)
+    unsigned int tmp;
+    for (auto &e : priceListWrapper.priceList.get()->m_List) {
+        if (e.m_W > e.m_H) {
+            tmp = e.m_W;
+            e.m_W = e.m_H;
+            e.m_H = tmp;
+        }
+    }
+}
+
+map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(PriceListWrapper &priceListWrapper) {
+    // Find BestPriceList for updating, construct it if record doesn't exist
+    map<int, BestPriceList>::iterator it;
+    int id = priceListWrapper.priceList.get()->m_MaterialID;
+
+    unique_lock<mutex> lock_BestPriceListPool(mtx_bestPriceListPoolManip);
+    it = bestPriceList.find(id);
+    if (it == bestPriceList.end()) {
+        bestPriceList[id] = BestPriceList(static_cast<unsigned int>(id), (int) producers.size());
+    }
+    lock_BestPriceListPool.unlock();
+    return it;
+}
+
+void CWeldingCompany::updateBestPriceList(const vector<CProd> &pricelist, BestPriceList &best) {
+    // update BestPriceList with given PriceList
+    unique_lock<mutex> lock_BestPriceListRecord(best.lock);
+    best.updateBestPriceList(pricelist);
+
+    // all pricings collected
+    if ((--best.pricingsLeft) == 0) {
+        unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
+        auto taskGroup = taskPool.find(best.id_material);
+        for (auto &task : taskGroup->second) {
+            ProgtestSolver(task.orderList.get()->m_List, best.createGetPriceList());
+            task.customer.get()->Completed(task.orderList);
+        }
+        taskPool.erase(taskGroup);
+        if (taskPool.empty()) // signal that the TaskPool is empty
+            cv_priceListPoolEmpty.notify_one();
+        lock_TaskPool.unlock();
+    }
+    lock_BestPriceListRecord.unlock();
+
 }
 
 //-------------------------------------------------------------------------------------------------
