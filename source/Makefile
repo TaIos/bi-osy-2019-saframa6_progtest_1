@@ -1,7 +1,7 @@
 CXX=g++
 LD=g++
 AR=ar
-CXXFLAGS=-std=c++14 -Wall -pedantic -O2
+CXXFLAGS=-std=c++14 -Wall -pedantic -O2 -g
 SHELL:=/bin/bash
 MACHINE=$(shell uname -m)-$(shell echo $$OSTYPE)
 
