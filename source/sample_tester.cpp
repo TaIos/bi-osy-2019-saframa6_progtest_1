@@ -112,7 +112,8 @@ void               CCustomerTest::Completed                ( AOrderList        x
   
   for ( size_t i = 0; i < c_Orders . size (); i ++ )
     if ( fabs ( c_Orders[i] . second - x -> m_List[i] . m_Cost ) > 1e-5 * c_Orders[i] . second )
-    { 
+    {
+       printf("%lf, %lf\n", c_Orders[i] . second, x -> m_List[i] . m_Cost);
       mismatch = true;
       break;
     }
