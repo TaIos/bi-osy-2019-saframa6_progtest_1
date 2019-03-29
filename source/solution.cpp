@@ -1,3 +1,8 @@
+/*
+ * UPSTREAM
+ * HTTPS: https://gitlab.fit.cvut.cz/saframa6/bi-osy-2019-saframa6_progtest_1
+ * SSH:   git@gitlab.fit.cvut.cz:saframa6/bi-osy-2019-saframa6_progtest_1.git
+ */
 #include <utility>
 
 #ifndef __PROGTEST__
@@ -44,17 +49,18 @@ struct Task {
 };
 
 struct BestPriceList {
-    int id_material;
+    unsigned id_material;
     int pricingsLeft;
     map<unsigned, map<unsigned, double>> best;
     mutex lock;
-    CPriceList priceList;
-    APriceList a;
 
-    BestPriceList(unsigned id_material, int pricingsLeft) : id_material(id_material), pricingsLeft(pricingsLeft),
-                                                            priceList(CPriceList(id_material)) {}
+    BestPriceList() = default;
 
-    BestPriceList() : priceList(CPriceList(0)) {}
+    BestPriceList(unsigned id_material, int pricingsLeft) : id_material(id_material), pricingsLeft(pricingsLeft) {}
+
+    void decreasePricingsLeft() {
+        pricingsLeft = pricingsLeft - 1;
+    }
 
     void updateBestPriceList(const vector<CProd> &list) {
         for (const auto &e : list) {
@@ -72,15 +78,15 @@ struct BestPriceList {
         }
     }
 
-    APriceList &createGetPriceList() {
-        priceList.m_List.clear();
+    APriceList createGetPriceList() {
+        APriceList priceList = make_shared<CPriceList>(id_material);
+
         for (auto i: best) {
             for (auto j: i.second) {
-                priceList.Add(CProd(i.first, j.first, j.second));
+                priceList->Add(CProd(i.first, j.first, j.second));
             }
         }
-        a = make_shared<CPriceList>(priceList);
-        return a;
+        return priceList;
     }
 
     BestPriceList &operator=(const BestPriceList &other) {
@@ -88,9 +94,14 @@ struct BestPriceList {
             id_material = other.id_material;
             pricingsLeft = other.pricingsLeft;
             best = other.best;
-            priceList = other.priceList;
         }
         return *this;
+    }
+
+    BestPriceList(const BestPriceList &other) {
+        id_material = other.id_material;
+        pricingsLeft = other.pricingsLeft;
+        best = other.best;
     }
 };
 
@@ -171,7 +182,7 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
     bool created;
 
     while (true) {
-        orderList = customer.get()->WaitForDemand();
+        orderList = customer->WaitForDemand();
 
         if (orderList == nullptr || orderList.get() == nullptr)
             break;
@@ -179,13 +190,14 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
         created = createUpdateTask(customer, orderList);
 
         if (created)
-            notifyAllProducersToSendPriceLists(orderList.get()->m_MaterialID);
+            notifyAllProducersToSendPriceLists(orderList->m_MaterialID);
     }
     customerThreadEndRoutine();
 }
 
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
+
     while (true) {
 
         currPriceList = popFromPricelist();
@@ -196,7 +208,7 @@ void CWeldingCompany::workerRoutine() {
         preprocessPricelist(currPriceList);
 
         auto it_best = findCreateBestPriceList(currPriceList);
-        updateBestPriceList(currPriceList.priceList.get()->m_List, it_best->second);
+        updateBestPriceList(currPriceList.priceList->m_List, it_best->second);
     }
 }
 
@@ -237,19 +249,19 @@ void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
 }
 
 PriceListWrapper CWeldingCompany::popFromPricelist() {
-    PriceListWrapper currPriceList;
+    PriceListWrapper poppedPriceList;
     unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
     cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
-    currPriceList = priceListPool.front();
+    poppedPriceList = priceListPool.front();
     priceListPool.pop_front();
     lock_PriceListPool.unlock();
-    return currPriceList;
+    return poppedPriceList;
 }
 
 void CWeldingCompany::preprocessPricelist(PriceListWrapper &priceListWrapper) {
 // make CurrPriceList consistent (m_W <= m_H is always true)
     unsigned int tmp;
-    for (auto &e : priceListWrapper.priceList.get()->m_List) {
+    for (auto &e : priceListWrapper.priceList->m_List) {
         if (e.m_W > e.m_H) {
             tmp = e.m_W;
             e.m_W = e.m_H;
@@ -260,13 +272,13 @@ void CWeldingCompany::preprocessPricelist(PriceListWrapper &priceListWrapper) {
 
 map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(PriceListWrapper &priceListWrapper) {
     // Find BestPriceList for updating, construct it if record doesn't exist
-    map<int, BestPriceList>::iterator it;
-    int id = priceListWrapper.priceList.get()->m_MaterialID;
+    unsigned id = priceListWrapper.priceList->m_MaterialID;
 
     unique_lock<mutex> lock_BestPriceListPool(mtx_bestPriceListPoolManip);
-    it = bestPriceList.find(id);
+    auto it = bestPriceList.find(id);
     if (it == bestPriceList.end()) {
-        bestPriceList[id] = BestPriceList(static_cast<unsigned int>(id), (int) producers.size());
+        auto tmp = bestPriceList.emplace_hint(it, id, BestPriceList(id, (int) producers.size()));
+        it = tmp;
     }
     lock_BestPriceListPool.unlock();
     return it;
@@ -274,16 +286,19 @@ map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(Price
 
 void CWeldingCompany::updateBestPriceList(const vector<CProd> &pricelist, BestPriceList &best) {
     // update BestPriceList with given PriceList
-    unique_lock<mutex> lock_BestPriceListRecord(best.lock);
-    best.updateBestPriceList(pricelist);
 
-    // all pricings collected, evaluate and return order to the customer
-    if ((--best.pricingsLeft) == 0) {
+    unique_lock<mutex> lock_BestPriceListRecord(best.lock);
+
+    best.updateBestPriceList(pricelist);
+    best.decreasePricingsLeft();
+
+    // all pricings collected, evaluate and return order to the customers
+    if (best.pricingsLeft == 0) {
         unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
         auto taskGroup = taskPool.find(best.id_material);
         for (auto &task : taskGroup->second) {
-            ProgtestSolver(task.orderList.get()->m_List, best.createGetPriceList());
-            task.customer.get()->Completed(task.orderList);
+            ProgtestSolver(task.orderList->m_List, best.createGetPriceList());
+            task.customer->Completed(task.orderList);
         }
         taskPool.erase(taskGroup);
         if (taskPool.empty()) // signal that the TaskPool is empty
@@ -291,18 +306,18 @@ void CWeldingCompany::updateBestPriceList(const vector<CProd> &pricelist, BestPr
         lock_TaskPool.unlock();
     }
     lock_BestPriceListRecord.unlock();
-
 }
 
 void CWeldingCompany::notifyAllProducersToSendPriceLists(unsigned int material_id) {
     for (const auto &p : producers) {
-        p.get()->SendPriceList(material_id);
+        p->SendPriceList(material_id);
     }
 }
 
 void CWeldingCompany::customerThreadEndRoutine() {
     unique_lock<mutex> lock_CustomerActiveCnt(mtx_customerActiveCntManip);
-    if ((--activeCustomerCnt) == 0)
+    activeCustomerCnt = activeCustomerCnt - 1;
+    if (activeCustomerCnt == 0)
         lastCustomerThreadRoutine();
     lock_CustomerActiveCnt.unlock();
 }
@@ -311,13 +326,12 @@ bool CWeldingCompany::createUpdateTask(ACustomer customer, AOrderList orderList)
     bool created = false;
 
     unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
-    auto it = taskPool.find(orderList.get()->m_MaterialID);
+    auto it = taskPool.find(orderList->m_MaterialID);
     if (it == taskPool.end()) {
-        taskPool.insert(it, map<int, vector<Task>>::value_type(orderList.get()->m_MaterialID,
-                                                               vector<Task>{Task(orderList.get()->m_MaterialID, customer, orderList)}));
+        taskPool.emplace_hint(it, orderList->m_MaterialID, vector<Task>{ Task(orderList->m_MaterialID, customer, orderList)});
         created = true;
     } else {
-        it->second.emplace_back(Task(orderList.get()->m_MaterialID, customer, orderList));
+        it->second.emplace_back(Task(orderList->m_MaterialID, customer, orderList));
     }
     lock_TaskPool.unlock();
 
