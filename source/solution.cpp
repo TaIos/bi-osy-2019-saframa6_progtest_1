@@ -51,6 +51,10 @@ struct BestPriceList {
     CPriceList priceList;
     APriceList a;
 
+    void decreasePricingsLeft() {
+        pricingsLeft = pricingsLeft - 1;
+    }
+
     BestPriceList(unsigned id_material, int pricingsLeft) : id_material(id_material), pricingsLeft(pricingsLeft),
                                                             priceList(CPriceList(id_material)) {}
 
@@ -186,6 +190,7 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
 
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
+
     while (true) {
 
         currPriceList = popFromPricelist();
@@ -237,13 +242,13 @@ void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
 }
 
 PriceListWrapper CWeldingCompany::popFromPricelist() {
-    PriceListWrapper currPriceList;
+    PriceListWrapper poppedPriceList;
     unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
     cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
-    currPriceList = priceListPool.front();
+    poppedPriceList = priceListPool.front();
     priceListPool.pop_front();
     lock_PriceListPool.unlock();
-    return currPriceList;
+    return poppedPriceList;
 }
 
 void CWeldingCompany::preprocessPricelist(PriceListWrapper &priceListWrapper) {
@@ -274,11 +279,14 @@ map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(Price
 
 void CWeldingCompany::updateBestPriceList(const vector<CProd> &pricelist, BestPriceList &best) {
     // update BestPriceList with given PriceList
-    unique_lock<mutex> lock_BestPriceListRecord(best.lock);
-    best.updateBestPriceList(pricelist);
 
-    // all pricings collected, evaluate and return order to the customer
-    if ((--best.pricingsLeft) == 0) {
+    unique_lock<mutex> lock_BestPriceListRecord(best.lock);
+
+    best.updateBestPriceList(pricelist);
+    best.decreasePricingsLeft();
+
+    // all pricings collected, evaluate and return order to the customers
+    if (best.pricingsLeft == 0) {
         unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
         auto taskGroup = taskPool.find(best.id_material);
         for (auto &task : taskGroup->second) {
@@ -291,7 +299,6 @@ void CWeldingCompany::updateBestPriceList(const vector<CProd> &pricelist, BestPr
         lock_TaskPool.unlock();
     }
     lock_BestPriceListRecord.unlock();
-
 }
 
 void CWeldingCompany::notifyAllProducersToSendPriceLists(unsigned int material_id) {
@@ -302,7 +309,8 @@ void CWeldingCompany::notifyAllProducersToSendPriceLists(unsigned int material_i
 
 void CWeldingCompany::customerThreadEndRoutine() {
     unique_lock<mutex> lock_CustomerActiveCnt(mtx_customerActiveCntManip);
-    if ((--activeCustomerCnt) == 0)
+    activeCustomerCnt = activeCustomerCnt - 1;
+    if (activeCustomerCnt == 0)
         lastCustomerThreadRoutine();
     lock_CustomerActiveCnt.unlock();
 }
