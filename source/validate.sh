@@ -28,5 +28,9 @@ do
 	fi
 
 	CNT=$(($CNT+1))
+	if [[ "$CNT" -eq "1000" ]]
+	then
+        break
+	fi
 	echo
 done

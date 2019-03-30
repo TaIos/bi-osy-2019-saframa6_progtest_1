@@ -142,6 +142,23 @@ struct BestPriceList {
     }
 };
 
+struct ToSolve {
+    BestPriceList * best;
+    vector<Task> tasks;
+
+    ToSolve() {}
+
+    void solve() {
+        if (!tasks.empty()) {
+            APriceList priceList = best->createGetPriceList();
+            for (auto & t : tasks) {
+                ProgtestSolver(t.orderList->m_List, priceList);
+                t.customer->Completed(t.orderList);
+            }
+        }
+    }
+};
+
 class CWeldingCompany {
 private:
     atomic<int> activeCustomerCnt;
@@ -179,7 +196,7 @@ private:
 
     map<int, BestPriceList>::iterator findCreateBestPriceList(PriceListWrapper &priceListWrapper);
 
-    void updateBestPriceList(PriceListWrapper &priceListWrapper, BestPriceList &best);
+    void updateBestPriceList(PriceListWrapper &priceListWrapper, BestPriceList &best, ToSolve &toSolve);
 
     void createUpdateTask(ACustomer customer, AOrderList orderList);
 
@@ -189,7 +206,7 @@ private:
 
     void lastCustomerThreadRoutine();
 
-    void taskCompleted(BestPriceList &best);
+    void taskCompleted(BestPriceList &best, ToSolve &toSolve);
 
     void getOrdersFromCustomers(unsigned material_id);
 
@@ -261,34 +278,27 @@ void CWeldingCompany::addDummyPricelistForKnownSolution(unsigned material_id) {
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
 
-//    printf("W: start\n");
     while (true) {
-//        printf("W: popping from price list ...\n");
+        ToSolve toSolve;
+
         currPriceList = popFromPricelist();
-//        printf("W: popping from price list done\n");
 
         if (currPriceList.end) {
-//            printf("W: got ending token\n");
             break;
         }
 
         preprocessPricelist(currPriceList);
 
-//        printf("W: find or create best pricelist\n");
         auto it_best = findCreateBestPriceList(currPriceList);
-//        printf("W: find or create best pricelist done\n");
 
         if (currPriceList.knownSolution) {
-//            printf("W: known solution\n");
-            taskCompleted(it_best->second);
-//            printf("W: known solution done\n");
+            taskCompleted(it_best->second, toSolve);
         } else {
-//            printf("W: unknown solution\n");
-            updateBestPriceList(currPriceList, it_best->second);
-//            printf("W: unknown solution done\n");
+            updateBestPriceList(currPriceList, it_best->second, toSolve);
         }
+
+        toSolve.solve();
     }
-//    printf("W: end\n");
 }
 
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
@@ -307,15 +317,12 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
 }
 
 void CWeldingCompany::Start(unsigned thrCount) {
-//    printf("===START RUN===\n");
-    //thrCount = 16;
     workerThreadCount = thrCount;
     activeCustomerCnt = (int) customers.size();
     for (auto &c : customers)
         threadsCustomer.emplace_back([=] { customerRoutine(c); });
 
     for (int i = 0; i < workerThreadCount; i++) {
-//        printf("Created worker thread %d\n", i);
         threadsWorker.emplace_back([=] { workerRoutine(); });
     }
 }
@@ -359,7 +366,7 @@ map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(Price
     return it;
 }
 
-void CWeldingCompany::updateBestPriceList(PriceListWrapper &priceListWrapper, BestPriceList &best) {
+void CWeldingCompany::updateBestPriceList(PriceListWrapper &priceListWrapper, BestPriceList &best, ToSolve &toSolve) {
     // update BestPriceList with given PriceList
 
     unique_lock<mutex> lock_BestPriceListRecord(best.lock);
@@ -368,22 +375,20 @@ void CWeldingCompany::updateBestPriceList(PriceListWrapper &priceListWrapper, Be
 
     // all pricings collected, evaluate and return order to the customers
     if (best.pricingsLeft <= 0)
-        taskCompleted(best);
+        taskCompleted(best, toSolve);
 }
 
-void CWeldingCompany::taskCompleted(BestPriceList &best) {
+void CWeldingCompany::taskCompleted(BestPriceList &best, ToSolve &toSolve) {
     unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
+
     auto taskGroup = taskPool.find(best.id_material);
     if (taskGroup != taskPool.end()) {
-        for (auto &task : taskGroup->second) {
-            auto it = best.createGetPriceList();
-            ProgtestSolver(task.orderList->m_List, it);
-            task.customer->Completed(task.orderList);
-        }
+        toSolve.best = &best;
+        toSolve.tasks = taskGroup->second;
+        taskPool.erase(taskGroup);
 
         unique_lock<mutex> lock_knownSolutions(mtx_knownSolutionsManip);
         knownSolutions.insert(best.id_material);
-        taskPool.erase(taskGroup);
     }
 
     if (taskPool.empty()) // signal that the TaskPool is empty
