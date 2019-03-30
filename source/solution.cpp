@@ -61,11 +61,11 @@ struct PriceListWrapper {
 
     PriceListWrapper() : end(false), knownSolution(false) {}
 
-    PriceListWrapper(unsigned material_id, bool knownSolution) : knownSolution(knownSolution) {
+    PriceListWrapper(unsigned material_id, bool knownSolution) : end(false), knownSolution(knownSolution) {
         priceList = make_shared<CPriceList>(material_id);
     }
 
-    PriceListWrapper(bool end) : end(end) {}
+    PriceListWrapper(bool end) : end(end), knownSolution(false) {}
 
 };
 
@@ -253,10 +253,8 @@ void CWeldingCompany::addDummyPricelistForKnownSolution(unsigned material_id) {
     if (knownSolutions.find(material_id) != knownSolutions.end()) {
         unique_lock<mutex> lock_priceListPoolManip(mtx_priceListPoolManip);
         priceListPool.emplace_back(PriceListWrapper(material_id, true));
-        lock_priceListPoolManip.unlock();
+        cv_priceListPoolEmpty.notify_one();
     }
-
-    lock_knownSolutions.unlock();
 }
 
 void CWeldingCompany::workerRoutine() {
@@ -307,7 +305,7 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
 
 void CWeldingCompany::Start(unsigned thrCount) {
     //printf("===NEW RUN===\n");
-    thrCount = 1;
+    thrCount = 2;
     activeCustomerCnt = (int) customers.size();
     for (auto &c : customers)
         threadsCustomer.emplace_back([=] { customerRoutine(c); });
