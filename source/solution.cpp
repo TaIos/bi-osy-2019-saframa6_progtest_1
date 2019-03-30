@@ -145,6 +145,7 @@ struct BestPriceList {
 class CWeldingCompany {
 private:
     atomic<int> activeCustomerCnt;
+    int workerThreadCount;
 
     map<int, vector<Task>> taskPool;
     deque<PriceListWrapper> priceListPool;
@@ -213,29 +214,29 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
     AOrderList orderList;
 
     while (true) {
-        //printf("C: waiting for demand\n");
+//        printf("C: waiting for demand\n");
         orderList = customer->WaitForDemand();
-        //printf("C: received demand\n");
+//        printf("C: received demand\n");
 
         if (orderList == nullptr || orderList.get() == nullptr)
             break;
 
-        //printf("C: creating or updating task\n");
+//        printf("C: creating or updating task\n");
         createUpdateTask(customer, orderList);
-        //printf("C: creating or updating task done\n");
+//        printf("C: creating or updating task done\n");
 
-        //printf("C: getting orders from customers\n");
+//        printf("C: getting orders from customers\n");
         getOrdersFromCustomers(orderList->m_MaterialID);
-        //printf("C: getting orders from customers done\n");
+//        printf("C: getting orders from customers done\n");
 
-        //printf("C: adding dummy price list for known solution\n");
+//        printf("C: adding dummy price list for known solution\n");
         addDummyPricelistForKnownSolution(orderList->m_MaterialID);
-        //printf("C: adding dummy price list for known solution done\n");
+//        printf("C: adding dummy price list for known solution done\n");
     }
 
-    //printf("C: entering customerThreadEndRoutine\n");
+//    printf("C: entering customerThreadEndRoutine\n");
     customerThreadEndRoutine();
-    //printf("C: exiting from customerThreadEndRoutine\n");
+//    printf("C: exiting from customerThreadEndRoutine\n");
 }
 
 void CWeldingCompany::getOrdersFromCustomers(unsigned material_id) {
@@ -260,32 +261,34 @@ void CWeldingCompany::addDummyPricelistForKnownSolution(unsigned material_id) {
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
 
-    //printf("W: start\n");
+//    printf("W: start\n");
     while (true) {
-        //printf("W: popping from price list ...\n");
+//        printf("W: popping from price list ...\n");
         currPriceList = popFromPricelist();
-        //printf("W: popping from price list done\n");
+//        printf("W: popping from price list done\n");
 
-        if (currPriceList.end)
+        if (currPriceList.end) {
+//            printf("W: got ending token\n");
             break;
+        }
 
         preprocessPricelist(currPriceList);
 
-        //printf("W: find or create best pricelist\n");
+//        printf("W: find or create best pricelist\n");
         auto it_best = findCreateBestPriceList(currPriceList);
-        //printf("W: find or create best pricelist done\n");
+//        printf("W: find or create best pricelist done\n");
 
         if (currPriceList.knownSolution) {
-            //printf("W: known solution\n");
+//            printf("W: known solution\n");
             taskCompleted(it_best->second);
-            //printf("W: known solution done\n");
+//            printf("W: known solution done\n");
         } else {
-            //printf("W: unknown solution\n");
+//            printf("W: unknown solution\n");
             updateBestPriceList(currPriceList, it_best->second);
-            //printf("W: unknown solution done\n");
+//            printf("W: unknown solution done\n");
         }
     }
-    //printf("W: end\n");
+//    printf("W: end\n");
 }
 
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
@@ -304,14 +307,17 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
 }
 
 void CWeldingCompany::Start(unsigned thrCount) {
-    //printf("===NEW RUN===\n");
-    thrCount = 2;
+//    printf("===START RUN===\n");
+    //thrCount = 16;
+    workerThreadCount = thrCount;
     activeCustomerCnt = (int) customers.size();
     for (auto &c : customers)
         threadsCustomer.emplace_back([=] { customerRoutine(c); });
 
-    for (unsigned i = 0; i < thrCount; i++)
+    for (int i = 0; i < workerThreadCount; i++) {
+//        printf("Created worker thread %d\n", i);
         threadsWorker.emplace_back([=] { workerRoutine(); });
+    }
 }
 
 void CWeldingCompany::Stop() {
@@ -319,7 +325,7 @@ void CWeldingCompany::Stop() {
         t.join();
     for (auto &t: threadsWorker)
         t.join();
-    //printf("===END RUN===\n");
+//    printf("===END RUN===\n\n");
 }
 
 void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
@@ -332,6 +338,7 @@ void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
 PriceListWrapper CWeldingCompany::popFromPricelist() {
     PriceListWrapper poppedPriceList;
     unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
+//    printf("W: waiting for priceListPool not empty\n");
     cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
     poppedPriceList = priceListPool.front();
     priceListPool.pop_front();
@@ -408,14 +415,15 @@ void CWeldingCompany::createUpdateTask(ACustomer customer, AOrderList orderList)
 }
 
 void CWeldingCompany::lastCustomerThreadRoutine() {
-    //printf("C(last): Entered lastCustomerThreadRoutine\n");
+//    printf("C(last): Entered lastCustomerThreadRoutine\n");
     unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
-    //printf("C(last): waiting for taskPool to be empty, currently has %d elements\n", (int) taskPool.size());
+//    printf("C(last): waiting for taskPool to be empty, currently has %d elements\n", (int) taskPool.size());
     cv_taskPoolEmpty.wait(lock_TaskPool, [this]() { return taskPool.empty(); });
     unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
-    //printf("C: task pool is empty, inserting ending tokens\n");
-    for (int i = 0; i < (int) threadsWorker.size(); i++) { // insert ending tokens for worker threads
+//    printf("C: task pool is empty, inserting %d ending tokens\n", workerThreadCount);
+    for (int i = 0; i < workerThreadCount; i++) { // insert ending tokens for worker threads
         priceListPool.emplace_back(PriceListWrapper(true));
+//        printf("C: Inserted one ending token\n");
     }
     cv_priceListPoolEmpty.notify_all(); // wake up all sleeping workerThreads
 }
