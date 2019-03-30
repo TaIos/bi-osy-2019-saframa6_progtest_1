@@ -9,7 +9,12 @@ RES=""
 
 while :
 do
+	echo -e "RUN:$CNT, BAD:$BAD, SEG:$SEG TIME:$(date +%T)"
+
 	RES=$(./"$EXECUTABLE")
+	echo "$RES"
+	#RES=$(strace -s 99 -ff ./"$EXECUTABLE")
+
 	ERR="$?"
 
 	if [[ ! -z "$(echo "$RES" | grep "fail")" ]]
@@ -22,8 +27,6 @@ do
 		SEG=$(($SEG+1))
 	fi
 
-	echo -e "RUN:$CNT, BAD:$BAD, SEG:$SEG TIME:$(date +%T)"
-	#echo "$RES"
 	CNT=$(($CNT+1))
 	echo
 done

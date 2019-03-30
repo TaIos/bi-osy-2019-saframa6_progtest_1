@@ -54,13 +54,19 @@ struct PriceListWrapper {
     AProducer prod;
     APriceList priceList;
     bool end;
+    bool knownSolution;
 
     PriceListWrapper(const AProducer &prod, const APriceList &priceList) : prod(prod), priceList(priceList),
-                                                                           end(false) {}
+                                                                           end(false), knownSolution(false) {}
 
-    PriceListWrapper() : end(false) {}
+    PriceListWrapper() : end(false), knownSolution(false) {}
+
+    PriceListWrapper(unsigned material_id, bool knownSolution) : knownSolution(knownSolution) {
+        priceList = make_shared<CPriceList>(material_id);
+    }
 
     PriceListWrapper(bool end) : end(end) {}
+
 };
 
 struct BestPriceList {
@@ -102,8 +108,8 @@ struct BestPriceList {
     APriceList createGetPriceList() {
         APriceList priceList = make_shared<CPriceList>(id_material);
 
-        for (auto & i: best) {
-            for (auto & j: i.second) {
+        for (auto &i: best) {
+            for (auto &j: i.second) {
                 priceList->Add(CProd(i.first, j.first, j.second));
             }
         }
@@ -144,6 +150,7 @@ private:
     deque<PriceListWrapper> priceListPool;
     map<int, BestPriceList> bestPriceList;
     set<int> obtainedOrders;
+    set<int> knownSolutions;
 
     vector<AProducer> producers;
     vector<ACustomer> customers;
@@ -155,7 +162,7 @@ private:
     mutex mtx_priceListPoolManip;
     mutex mtx_bestPriceListPoolManip;
     mutex mtx_obtainedOrdersManip;
-    mutex mtx_GLOBAL_LOCK;
+    mutex mtx_knownSolutionsManip;
 
     condition_variable cv_priceListPoolEmpty; // protects from removing from empty pool
     condition_variable cv_taskPoolEmpty; // signals when TaskPool is empty
@@ -183,7 +190,9 @@ private:
 
     void taskCompleted(BestPriceList &best);
 
-    void processBestPriceList(map<int, BestPriceList>::iterator best_it, PriceListWrapper priceList);
+    void getOrdersFromCustomers(unsigned material_id);
+
+    void addDummyPricelistForKnownSolution(unsigned material_id);
 
 public:
 
@@ -204,39 +213,81 @@ void CWeldingCompany::customerRoutine(ACustomer customer) {
     AOrderList orderList;
 
     while (true) {
+        printf("C: waiting for demand\n");
         orderList = customer->WaitForDemand();
+        printf("C: received demand\n");
 
         if (orderList == nullptr || orderList.get() == nullptr)
             break;
 
+        printf("C: creating or updating task\n");
         createUpdateTask(customer, orderList);
+        printf("C: creating or updating task done\n");
 
-        unique_lock<mutex> lock_obtainedOrders(mtx_obtainedOrdersManip);
-        if (obtainedOrders.find(orderList->m_MaterialID) == obtainedOrders.end()) {
-            notifyAllProducersToSendPriceLists(orderList->m_MaterialID);
-            obtainedOrders.insert(orderList->m_MaterialID);
-        }
-        lock_obtainedOrders.unlock();
+        printf("C: getting orders from customers\n");
+        getOrdersFromCustomers(orderList->m_MaterialID);
+        printf("C: getting orders from customers done\n");
+
+        printf("C: adding dummy price list for known solution\n");
+        addDummyPricelistForKnownSolution(orderList->m_MaterialID);
+        printf("C: adding dummy price list for known solution done\n");
     }
+
+    printf("C: entering customerThreadEndRoutine\n");
     customerThreadEndRoutine();
+    printf("C: exiting from customerThreadEndRoutine\n");
+}
+
+void CWeldingCompany::getOrdersFromCustomers(unsigned material_id) {
+    unique_lock<mutex> lock_obtainedOrders(mtx_obtainedOrdersManip);
+    if (obtainedOrders.find(material_id) == obtainedOrders.end()) {
+        obtainedOrders.insert(material_id);
+        notifyAllProducersToSendPriceLists(material_id);
+    }
+    lock_obtainedOrders.unlock();
+}
+
+void CWeldingCompany::addDummyPricelistForKnownSolution(unsigned material_id) {
+    unique_lock<mutex> lock_knownSolutions(mtx_knownSolutionsManip);
+
+    if (knownSolutions.find(material_id) != knownSolutions.end()) {
+        unique_lock<mutex> lock_priceListPoolManip(mtx_priceListPoolManip);
+        priceListPool.emplace_back(PriceListWrapper(material_id, true));
+        lock_priceListPoolManip.unlock();
+    }
+
+    lock_knownSolutions.unlock();
 }
 
 void CWeldingCompany::workerRoutine() {
     PriceListWrapper currPriceList;
 
+    printf("W: start\n");
     while (true) {
-        //unique_lock<mutex> global(mtx_GLOBAL_LOCK);
+        printf("W: popping from price list ...\n");
         currPriceList = popFromPricelist();
+        printf("W: popping from price list done\n");
 
         if (currPriceList.end)
             break;
 
         preprocessPricelist(currPriceList);
 
+        printf("W: find or create best pricelist\n");
         auto it_best = findCreateBestPriceList(currPriceList);
-        processBestPriceList(it_best, currPriceList);
-        //global.unlock();
+        printf("W: find or create best pricelist done\n");
+
+        if (currPriceList.knownSolution) {
+            printf("W: known solution\n");
+            taskCompleted(it_best->second);
+            printf("W: known solution done\n");
+        } else {
+            printf("W: unknown solution\n");
+            updateBestPriceList(currPriceList, it_best->second);
+            printf("W: unknown solution done\n");
+        }
     }
+    printf("W: end\n");
 }
 
 void CWeldingCompany::AddPriceList(AProducer prod, APriceList priceList) {
@@ -255,6 +306,8 @@ void CWeldingCompany::AddCustomer(ACustomer cust) {
 }
 
 void CWeldingCompany::Start(unsigned thrCount) {
+    printf("===NEW RUN===\n");
+    thrCount = 1;
     activeCustomerCnt = (int) customers.size();
     for (auto &c : customers)
         threadsCustomer.emplace_back([=] { customerRoutine(c); });
@@ -268,6 +321,7 @@ void CWeldingCompany::Stop() {
         t.join();
     for (auto &t: threadsWorker)
         t.join();
+    printf("===END RUN===\n");
 }
 
 void CWeldingCompany::SeqSolve(APriceList priceList, COrder &order) {
@@ -283,16 +337,6 @@ PriceListWrapper CWeldingCompany::popFromPricelist() {
     cv_priceListPoolEmpty.wait(lock_PriceListPool, [this]() { return !priceListPool.empty(); });
     poppedPriceList = priceListPool.front();
     priceListPool.pop_front();
-
-    if (!poppedPriceList.end && false) {
-        printf("ID=%d\n", poppedPriceList.priceList->m_MaterialID);
-        printf("--------------\n");
-        for (const auto &i : poppedPriceList.priceList->m_List) {
-            printf("Popped: %d, %d, %lf\n", i.m_W, i.m_H, i.m_Cost);
-        }
-        printf("--------------\n");
-    }
-
     lock_PriceListPool.unlock();
     return poppedPriceList;
 }
@@ -307,12 +351,7 @@ map<int, BestPriceList>::iterator CWeldingCompany::findCreateBestPriceList(Price
         auto tmp = bestPriceList.emplace_hint(it, id, BestPriceList(id, (int) producers.size()));
         it = tmp;
     }
-    lock_BestPriceListPool.unlock();
     return it;
-}
-
-void CWeldingCompany::processBestPriceList(map<int, BestPriceList>::iterator best_it, PriceListWrapper priceList) {
-    updateBestPriceList(priceList, best_it->second);
 }
 
 void CWeldingCompany::updateBestPriceList(PriceListWrapper &priceListWrapper, BestPriceList &best) {
@@ -325,22 +364,25 @@ void CWeldingCompany::updateBestPriceList(PriceListWrapper &priceListWrapper, Be
     // all pricings collected, evaluate and return order to the customers
     if (best.pricingsLeft <= 0)
         taskCompleted(best);
-
-    lock_BestPriceListRecord.unlock();
 }
 
 void CWeldingCompany::taskCompleted(BestPriceList &best) {
     unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
     auto taskGroup = taskPool.find(best.id_material);
-    for (auto &task : taskGroup->second) {
-        auto it = best.createGetPriceList();
-        ProgtestSolver(task.orderList->m_List, it);
-        task.customer->Completed(task.orderList);
+    if (taskGroup != taskPool.end()) {
+        for (auto &task : taskGroup->second) {
+            auto it = best.createGetPriceList();
+            ProgtestSolver(task.orderList->m_List, it);
+            task.customer->Completed(task.orderList);
+        }
+
+        unique_lock<mutex> lock_knownSolutions(mtx_knownSolutionsManip);
+        knownSolutions.insert(best.id_material);
+        taskPool.erase(taskGroup);
     }
-    taskPool.erase(taskGroup);
+
     if (taskPool.empty()) // signal that the TaskPool is empty
         cv_taskPoolEmpty.notify_one();
-    lock_TaskPool.unlock();
 }
 
 void CWeldingCompany::notifyAllProducersToSendPriceLists(unsigned int material_id) {
@@ -368,14 +410,15 @@ void CWeldingCompany::createUpdateTask(ACustomer customer, AOrderList orderList)
 }
 
 void CWeldingCompany::lastCustomerThreadRoutine() {
+    printf("C(last): Entered lastCustomerThreadRoutine\n");
     unique_lock<mutex> lock_TaskPool(mtx_taskPoolManip);
+    printf("C(last): waiting for taskPool to be empty, currently has %d elements\n", (int) taskPool.size());
     cv_taskPoolEmpty.wait(lock_TaskPool, [this]() { return taskPool.empty(); });
     unique_lock<mutex> lock_PriceListPool(mtx_priceListPoolManip);
+    printf("C: task pool is empty, inserting ending tokens\n");
     for (int i = 0; i < (int) threadsWorker.size(); i++) { // insert ending tokens for worker threads
         priceListPool.emplace_back(PriceListWrapper(true));
     }
-    lock_PriceListPool.unlock();
-    lock_TaskPool.unlock();
     cv_priceListPoolEmpty.notify_all(); // wake up all sleeping workerThreads
 }
 
