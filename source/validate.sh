@@ -12,18 +12,18 @@ do
 	RES=$(./"$EXECUTABLE")
 	ERR="$?"
 
-	if [ ! -z "$(echo "$RES" | grep "fail")" ]
+	if [[ ! -z "$(echo "$RES" | grep "fail")" ]]
 	then
 		BAD=$(($BAD+1))
 	fi
 
-	if [ "$ERR" -eq  "$SEGMENTATION_ERR_CODE" ]
+	if [[ "$ERR" -eq  "$SEGMENTATION_ERR_CODE" ]]
 	then
 		SEG=$(($SEG+1))
 	fi
 
 	echo -e "RUN:$CNT, BAD:$BAD, SEG:$SEG TIME:$(date +%T)"
-	echo "$RES"
+	#echo "$RES"
 	CNT=$(($CNT+1))
 	echo
 done
